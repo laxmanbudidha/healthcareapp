@@ -1,22 +1,26 @@
-<div class="container">
-  <h1>Healthcare Live Conversation</h1>
-
-  <div class="buttons">
-    <button (click)="startRecognition()" [disabled]="isRecording">🎙️ Start</button>
-    <button (click)="stopRecognition()" [disabled]="!isRecording">⏹️ Stop</button>
+<div class="app-container">
+  <div *ngIf="showDeviceChangeWarning" class="popup-warning">
+    🎧 Microphone changed — continuing with best available device.
   </div>
 
-  <div class="transcripts"*ngIf="speakerLines">
-    <h3>📝 Live Transcription</h3>
-    <div *ngFor="let line of transcripts" class="transcript-entry">
-      {{ line }}
-    </div>
+  <div style="margin-bottom: 16px;">
+    <button class="start-btn" (click)="startRecognition()" [disabled]="isRecording || !selectedDeviceId">
+      🎤 Start Recording
+    </button>
+    <button class="stop-btn" (click)="stopRecognition()" [disabled]="!isRecording">
+      ⏹ Stop Recording
+    </button>
+    <span *ngIf="isLoading" style="margin-left:10px; font-style: italic;">Processing...</span>
   </div>
 
-<div *ngIf="speakerLines.length > 0">
-  <h3>🗣️ Speaker Diarization</h3>
-  <div *ngFor="let line of speakerLines" [style.color]="getSpeakerColor(line)">
-    {{ line }}
+  <h3>Live Transcription</h3>
+  <div class="transcription-container">
+    <div *ngFor="let text of transcripts" class="transcription-item">{{ text }}</div>
   </div>
-</div>
+
+  <h3>Speaker Diarization</h3>
+  <div *ngFor="let seg of diarizationSegments; let i = index" class="diarization-segment">
+    <span class="speaker-label speaker-{{ (i % 8) + 1 }}">{{ seg.speaker }}</span>
+    <div class="transcript-text">{{ seg.text }}</div>
+  </div>
 </div>

@@ -1,134 +1,204 @@
+import { Component, NgZone, OnInit } from '@angular/core';
+import { SpeechService } from '../SpeechService';
 
-import { Component } from '@angular/core';
-import * as SpeechSDK from 'microsoft-cognitiveservices-speech-sdk';
-import { Router } from '@angular/router';
+interface AudioDevice {
+  deviceId: string;
+  label: string;
+}
 
 @Component({
   selector: 'app-root',
   templateUrl: './app.component.html',
-  styleUrl: './app.component.css'
+  styleUrls: ['./app.component.css']
 })
-export class AppComponent {
+export class AppComponent implements OnInit {
+
   transcripts: string[] = [];
-  diarizationSegments: { speaker: string, text: string }[] = [];
-  numberOfSpeakers: number = 0;
+  diarizationSegments: { speaker: string; text: string }[] = [];
+
   isRecording = false;
-diarizationContents: string = '';
-speakerLines: string[] = [];
+  isLoading = false;
+  showDeviceChangeWarning = false;
 
-constructor(private router: Router) {}
+  audioInputDevices: AudioDevice[] = [];
+  selectedDeviceId: string | null = null;
 
-speechRecognizer: SpeechSDK.SpeechRecognizer | null = null;
+  private audioChunks: Blob[] = [];      // ✅ All chunks from entire session
+  private mediaStream: MediaStream | null = null;
+  private mediaRecorder: MediaRecorder | null = null;
 
-private mediaRecorder: MediaRecorder | null = null;
-  private audioChunks: BlobPart[] = [];
+  constructor(private speechService: SpeechService, private ngZone: NgZone) {}
 
-  startRecognition() {
-    const key = 'Dnrhw3zPpaDffX1cKBSZiDJKvQom1dyPxag0bM3ghs5OYWVf9dFeJQQJ99BAACYeBjFXJ3w3AAAYACOG3ANV';
-    const region = 'eastus';
+  ngOnInit(): void {
+    this.autoSelectBestMic();
 
-    const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(key, region);
-    speechConfig.speechRecognitionLanguage = 'en-US';
-
-    const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
-    this.speechRecognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
-
-    this.speechRecognizer.recognized = (s, e) => {
-      if (e.result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {
-        this.transcripts.push(e.result.text);
-      }
-    };
-
-    this.speechRecognizer.startContinuousRecognitionAsync(() => {
-      this.isRecording = true;
-      this.transcripts = [];
-      this.diarizationSegments = [];
-      this.numberOfSpeakers = 0;
-    });
-
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-      this.mediaRecorder = new MediaRecorder(stream);
-      this.audioChunks = [];
-      this.mediaRecorder.ondataavailable = e => this.audioChunks.push(e.data);
-      this.mediaRecorder.start();
-    });
-  }
-  
-stopRecognition() {
-  if (!this.isRecording) return;
-  this.isRecording = false;
-
-  // 🛑 Stop Azure Speech Recognition
-  if (this.speechRecognizer) {
-    this.speechRecognizer.stopContinuousRecognitionAsync(
-      () => console.log('Recognition stopped'),
-      err => console.error('Error stopping recognition:', err)
-    );
-  }
-
-  // 🛑 Handle MediaRecorder stop and upload
-  if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-    const stream = this.mediaRecorder.stream;
-
-    this.mediaRecorder.onstop = async () => {
-      try {
-        const audioBlob = new Blob(this.audioChunks, { type: 'audio/wav' });
-        this.uploadRawAudio(audioBlob);
-
-        if (stream) {
-          stream.getTracks().forEach(track => track.stop());
+    navigator.mediaDevices.addEventListener('devicechange', async () => {
+      const bestDevice = await this.autoSelectBestMic();
+      if (this.isRecording) {
+        this.showDeviceChangeWarning = true;
+        if (!bestDevice) {
+          // Wait until mic appears again
+          const waitInt = setInterval(async () => {
+            const found = await this.autoSelectBestMic();
+            if (found) {
+              clearInterval(waitInt);
+              this.switchMic(found);
+            }
+          }, 1000);
+        } else {
+          this.switchMic(bestDevice);
         }
+      }
+    });
+  }
 
-        // Reset state
-        this.audioChunks = [];
-       this.speechRecognizer = null;
-        this.mediaRecorder = null;
-      } catch (error) {
-        console.error('Error converting audio to WAV:', error);
+  /** Detect mics and pick best */
+  private async autoSelectBestMic(): Promise<string | null> {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    this.audioInputDevices = devices
+      .filter(d => d.kind === 'audioinput')
+      .map(d => ({
+        deviceId: d.deviceId,
+        label: d.label || `Mic (${d.deviceId})`
+      }));
+    this.selectedDeviceId = this.getBestMic();
+    return this.selectedDeviceId;
+  }
+
+  private getBestMic(): string | null {
+    if (!this.audioInputDevices.length) return null;
+    const headset = this.audioInputDevices.find(d =>
+      /headset|usb|headphone/i.test(d.label.toLowerCase())
+    );
+    return headset ? headset.deviceId : this.audioInputDevices[0].deviceId;
+  }
+
+  /** Start full session */
+  async startRecognition(): Promise<void> {
+    if (this.isRecording || !this.selectedDeviceId) return;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: { exact: this.selectedDeviceId } }
+    });
+    this.startRecordingWithSpeech(stream);
+    this.isRecording = true;
+  }
+
+  private startRecordingWithSpeech(stream: MediaStream) {
+    this.mediaStream = stream;
+
+    // Start Azure STT
+    this.speechService.startRecognitionWithStream(stream, text => {
+      if (text.trim()) this.transcripts.push(text);
+    });
+
+    // Start recording
+    this.mediaRecorder = new MediaRecorder(stream);
+    this.mediaRecorder.ondataavailable = e => {
+      if (e.data.size > 0) {
+        this.audioChunks.push(e.data); // ✅ Append new mic's audio
       }
     };
-
-    this.mediaRecorder.stop();
+    this.mediaRecorder.start();
   }
-}
-uploadRawAudio(audioBlob: Blob) {
-  const formData = new FormData();
-  formData.append('file', audioBlob, 'recording.webm');
 
-  fetch('https://localhost:44332/audio/upload', {
-    method: 'POST',
-    body: formData
-  })
-  .then(res => res.json())
-  .then(data => {
-    debugger;
-    this.diarizationContents = data.diarizationContent || '';
-    this.speakerLines = this.diarizationContents.split('\r\n').filter(line => line.trim().length > 0);
+  /** Stop full session */
+  async stopRecognition(): Promise<void> {
+    if (!this.isRecording) return;
+    this.isLoading = true;
 
-    // ✅ Custom call: log, notify, or trigger UI
-    this.onDiarizationReceived(data);
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      await new Promise<void>(resolve => {
+        this.mediaRecorder!.onstop = async () => {
+          await this.uploadFullAudio();
+          resolve();
+        };
+        this.mediaRecorder!.stop();
+      });
+    } else {
+      await this.uploadFullAudio();
+    }
+  }
 
-    //  this.dataService.diarizationContent = data.diarizationContent;
-    // this.dataService.finalTranscription = data.finalTranscription;
+  /** Switch to new mic mid-session */
+  private async switchMic(deviceId: string) {
+    // Stop current recorder to flush current mic’s audio
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      await new Promise<void>(res => {
+        this.mediaRecorder!.onstop = () => res();
+        this.mediaRecorder!.stop();
+      });
+    }
 
-    // // ✅ Redirect to result page
-    // this.router.navigate(['/result']);
-  })
-  .catch(err => console.error('Upload error:', err));
-}
-onDiarizationReceived(data: any) {
-  console.log('🧠 Diarization received:', data);
+    // Stop Azure and release old mic
+    await this.speechService.stopRecognition();
+    this.releaseCurrentStream();
 
-  // Example: show toast, update dashboard, or trigger animation
-  // this.toastService.show('Diarization complete!');
-  // this.analyticsService.logEvent('diarization_complete', data);
+    // Start new mic
+    const newStream = await navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: { exact: deviceId } }
+    });
+    this.startRecordingWithSpeech(newStream);
+    this.selectedDeviceId = deviceId;
+    this.showDeviceChangeWarning = false;
+  }
 
-  // You could also parse speaker segments here if needed
-}
- 
-  getSpeakerColor(line: string): string {
-    if (line.startsWith('Speaker 1')) return '#007bff'; // Blue
-    if (line.startsWith('Speaker 2')) return '#28a745'; // Green
-    return '#333'; // Default
+  /** Merge & send final audio with all chunks */
+  private async uploadFullAudio() {
+    const blob = new Blob(this.audioChunks, { type: 'audio/wav' });
+
+    // DEBUG — play full merged audio locally to verify
+    // const url = URL.createObjectURL(blob);
+    // window.open(url);
+
+    try {
+      await this.uploadToBackend(blob);
+    } catch (err) {
+      console.error('Upload failed:', err);
+    }
+    await this.speechService.stopRecognition();
+    this.cleanup();
+  }
+
+  /** Send to diarization endpoint */
+  private async uploadToBackend(blob: Blob) {
+    const formData = new FormData();
+    formData.append('file', blob, 'recording.wav');
+
+    const res = await fetch('https://localhost:44332/audio/upload', {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+
+    if (data?.diarizationContent) {
+      this.ngZone.run(() => this.parseDiarization(data.diarizationContent));
+    }
+  }
+
+  private parseDiarization(content: string) {
+    const lines = content.split('\n').filter(l => l.trim());
+    this.diarizationSegments = lines.map(line => {
+      const [speaker, ...txt] = line.split(':');
+      return {
+        speaker: speaker.trim(),
+        text: txt.join(':').trim()
+      };
+    });
+  }
+
+  private releaseCurrentStream() {
+    if (this.mediaStream) {
+      this.mediaStream.getTracks().forEach(t => t.stop());
+    }
+    this.mediaStream = null;
+    this.mediaRecorder = null;
+  }
+
+  private cleanup() {
+    this.releaseCurrentStream();
+    this.audioChunks = [];
+    this.isRecording = false;
+    this.isLoading = false;
+    this.showDeviceChangeWarning = false;
   }
 }

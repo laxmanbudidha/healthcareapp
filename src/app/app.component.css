@@ -1,4 +1,4 @@
-.container {
+/* .container {
   max-width: 800px;
   margin: 0 auto;
   padding: 20px;
@@ -37,4 +37,73 @@ button {
 
 .diarization-line {
   padding: 5px 0;
+} */
+
+/* General app container */
+/* Center everything with gradient background */
+/* Fullscreen gradient background & center content */
+:host {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #6dd5fa, #ffffff);
+  padding: 20px;
+}
+.app-container {
+  background: #fff;
+  padding: 28px;
+  border-radius: 14px;
+  max-width: 700px;
+  width: 100%;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+}
+button {
+  border: none;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.start-btn { background: #4cafef; color: #fff; }
+.stop-btn { background: #ff6b6b; color: #fff; }
+.popup-warning {
+  background: #fff8e1;
+  color: #8a6d3b;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+.transcription-container {
+  background: #f9f9f9;
+  border-radius: 8px;
+  padding: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.transcription-item {
+  border-bottom: 1px solid #eee;
+  padding: 6px 0;
+}
+.diarization-segment {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.speaker-label {
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-weight: bold;
+  color: #fff;
+  margin-right: 10px;
+}
+.speaker-1 { background: #42a5f5; }
+.speaker-2 { background: #26a69a; }
+.speaker-3 { background: #ef5350; }
+.speaker-4 { background: #fbc02d; color: #333; }
+.transcript-text {
+  background: #f5f7fa;
+  padding: 6px 10px;
+  border-radius: 5px;
+  flex: 1;
 }
